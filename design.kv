@@ -1,0 +1,65 @@
+#:import chex kivy.utils.get_color_from_hex
+
+MainWidget :
+	orientation : "vertical"
+	
+	drawer : drawer.__self__
+	screen_holder : screen_holder.__self__
+	header : header.__self__
+	
+	HeaderBar :
+		id : header
+		size_hint : 1 , 0.08
+	
+	MDNavigationLayout :
+		size_hint : 1 , 0.92
+		
+		MDScreenManager:
+			id : screen_holder
+		
+		MDNavigationDrawer:
+			id : drawer
+			radius: (0, 16, 16, 0)
+			size_hint : 0.6 , 1
+			md_bg_color : chex("#5F3C3D")
+			
+
+
+# ====== Subpart Of MainWidget
+<HeaderBar> :
+	menu : menu
+	header_name : header_name
+	
+	canvas.before :
+		Color :
+			rgb : chex("#522123")
+		RoundedRectangle :
+			pos : self.pos
+			size : self.size
+			radius : (0 , 0 , 1 , 1)
+	
+	HeaderMenu :
+		id : menu
+		icon : "menu"
+		size_hint : 0.15 , 1
+		icon_size : sp(35)
+		ripple_color : chex("#6D4B4C")
+		ripple_alpha : 0.8
+		theme_icon_color: "Custom"
+		icon_color : "white"
+		
+		on_release :
+			root.openDrawer()
+	
+	MDLabel :
+		id : header_name
+		size_hint : 0.85 , 1
+		text : f" { root.current_screen }"
+		font_name : "font"
+		font_size : sp(33)
+		color : "white"
+
+
+# ====== Additional Designing Of Subpart Or MainWidget
+
+
