@@ -1,0 +1,23 @@
+
+
+<EnvelopeMainWidget>:
+	
+	BoxLayout :
+		orientation : "vertical"
+		
+		# -----> Search Bar
+		BoxLayout :
+			size_hint : 1 , 0.1
+		
+		
+		BoxLayout :
+			size_hint : 1 , 0.9
+			
+			ScrollView:
+				
+				# -----> Envelopes Container
+				MDGridLayout :
+					adaptive_height : True
+					cols : 1
+					
+	
