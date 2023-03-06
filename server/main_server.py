@@ -2,10 +2,12 @@ import socket
 import sys
 from cryptography.fernet import Fernet
 import typing as tp
+import threading
 from threading import Thread
 import time
 import pickle
 from uuid import uuid4
+from datetime import datetime
 
 from database_handler import *
 
@@ -92,6 +94,10 @@ class OCEnvelopesMainServer:
     # failed : str
     # not users : str
 
+    thread_accept_clients : Thread = None
+    thread_verifiying_clients : Thread = None
+    thread_processing_clients : Thread = None
+
     write_in_database = DatabaseWritingHandler()
 
     def __init__(self , addr = None , listen = None):
@@ -104,11 +110,14 @@ class OCEnvelopesMainServer:
     def run(self):
         print(' Run Server '.center(40, '-'))
         self.create_server()
-        Thread(target=self.accept_clients).start()
+        self.thread_accept_clients = Thread(target=self.accept_clients)
+        self.thread_accept_clients.start()
         time.sleep(1)
-        Thread(target=self.verifiying_clients).start()
+        self.thread_verifiying_clients = Thread(target=self.verifiying_clients)
+        self.thread_verifiying_clients.start()
         time.sleep(1)
-        Thread(target=self.processing_clients_activity).start()
+        self.thread_processing_clients = Thread(target=self.processing_clients_activity)
+        self.thread_processing_clients.start()
         time.sleep(1)
         self.write_in_database.run()
         time.sleep(5)
@@ -157,30 +166,55 @@ class OCEnvelopesMainServer:
             user_datas = findTheUser( client[1]['activity data'][0] , client[1]['activity data'][1] )
             if not user_datas :
                 data = { 'result' : 'error' , 'data' : None }
-            else :
-                data = { 'result' : 'success' , 'data' : user_datas }
+                done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+
+            data = { 'result' : 'success' , 'data' : user_datas }
             # recieved : id , server id , user id , username , password , sent , recieved , filename , number of activity
             done_transaction( data , client[0] , client[2] )
 
             # do the activity needed in the database
+            activity = { 'activity' : 'enter' ,
+                         'activity data' : ( client[1]['activity data'][0] , client[1]['activity data'][1] ) , 'main' : True  }
+            self.write_in_database.add_activity(activity)
 
         # ----> Sign Up
         elif client[1]['activity'] == self.activities[1]:
             # activity data : ( username , password )
             user_datas = findTheUserByUsername( client[1]['activity data'][0] )
             if user_datas :
-                data = { 'result' : 'error' , 'data' : None }
-            else :
-                user_datas = ( self.INFO['server id'], uuid4(),
-                               client[1]['activity data'][0] , client[1]['activity data'][1] ,
-                               0 , 0 ,
-                               f'{uuid4()}.db' , 0
-                            )
-                data = { 'result' : 'success' , 'data' : user_datas }
-            # recieved : id , server id , user id , username , password , sent , recieved , filename , number of activity
+                data = { 'result' : 'error' , 'data' : 'already exist' }
+                done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+
+            data = { 'result' : 'success' , 'data' : 'wait a moment' }
+            # recieved : may take some time to save in database
             done_transaction( data , client[0] , client[2] )
 
             # do the activity needed in the database
+            user_datas = (self.INFO['server id'], uuid4(),
+                          client[1]['activity data'][0], client[1]['activity data'][1],
+                          0, 0,
+                          f'{uuid4()}.db', 0
+                          )
+            createUserDatabase(user_datas[-2] , user_recieved_table)
+            createUserDatabase(user_datas[-2], user_sent_table)
+            activity = {'activity': 'enter',
+                        'activity data': (client[1]['activity data'][0], client[1]['activity data'][1]), 'main': True}
+            self.write_in_database.add_activity(activity)
+
+            activity = {'activity': 'create account',
+                        'activity data': user_datas, 'main': True}
+            self.write_in_database.add_activity(activity)
+
+
+            client[2].close()
+            self.clients['processing'].remove(client)
+            return
 
         # ----> Ranking
         elif client[1]['activity'] == self.activities[2]:
@@ -193,7 +227,13 @@ class OCEnvelopesMainServer:
             done_transaction( data , client[0] , client[2] )
 
             # do the activity needed in the database
+            activity = {'activity': 'enter',
+                        'activity data': (client[1]['activity data'][0], client[1]['activity data'][1]), 'main': True}
+            self.write_in_database.add_activity(activity)
 
+            client[2].close()
+            self.clients['processing'].remove(client)
+            return
 
         # ----> Search
         elif client[1]['activity'] == self.activities[3]:
@@ -202,6 +242,10 @@ class OCEnvelopesMainServer:
             if not user_database : # If user is not registered then stop the activities
                 data = {'result': 'error', 'data': None}
                 done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+
             filename = user_database[-2]
             found_data = getDataByFind(filename , user_recieved_table ,
                                        client[1]['activity data'][0] , client[1]['activity data'][1]
@@ -211,6 +255,13 @@ class OCEnvelopesMainServer:
             done_transaction(data , client[0] , client[2])
 
             # do the activity needed in the database
+            activity = {'activity': 'enter',
+                        'activity data': (client[1]['activity data'][0], client[1]['activity data'][1]), 'main': True}
+            self.write_in_database.add_activity(activity)
+
+            client[2].close()
+            self.clients['processing'].remove(client)
+            return
 
         # ----> News
         elif client[1]['activity'] == self.activities[4]:
@@ -219,17 +270,73 @@ class OCEnvelopesMainServer:
             if not user_database:  # If user is not registered then stop the activities
                 data = {'result': 'error', 'data': None}
                 done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+
             filename = user_database[-2]
             newest_recieved = getDataByNewestAdded(filename , user_recieved_table , client[1]['activity data'] )
             data = { 'result' : 'success' , 'data' : newest_recieved }
+            # recieved : tuple[ current : int  , list[ ( id , nickname , date , message ), ... ] ]
             done_transaction(data , client[0] , client[2] )
 
             # do the activity needed in the database
+            activity = {'activity': 'enter',
+                        'activity data': (client[1]['activity data'][0], client[1]['activity data'][1]), 'main': True}
+            self.write_in_database.add_activity(activity)
+
+            client[2].close()
+            self.clients['processing'].remove(client)
+            return
+
+        # ----> Send
+        elif client[1]['activity'] == self.activities[5]:
+            # activity data : ( nickname , date , title ,messsage )
+            user_database: tuple = findTheUser(client[1]['username'], client[1]['password'])
+            found_user_database : tuple = findTheUserByUsername(client[1]['username'])
+            if not user_database:  # If user is not registered then stop the activities
+                data = {'result': 'error', 'data': None}
+                done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+            if not found_user_database :
+                data = {'result': 'failed', 'data': 'not found'}
+                done_transaction(data, client[0], client[2])
+                client[2].close()
+                self.clients['processing'].remove(client)
+                return
+
+            data = {'result': 'success', 'data': True }
+            done_transaction(data, client[0], client[2])
+
+            # do the activity needed in the database
+            current_date = datetime.now().strftime('%m/%d/%Y')
+            activity = {'activity': 'enter',
+                        'activity data': ( client[1]['username'] , client[1]['password'] ), 'main': True}
+            self.write_in_database.add_activity(activity)
+
+
+            activity = {'activity': 'recieving',
+                        'activity data': (
+                            found_user_database[7] , user_recieved_table ,
+                            client[1]['activity data'][0] , current_date ,
+                            client[1]['activity data'][2] , client[1]['activity data'][3] ),
+                        'main': False}
+            self.write_in_database.add_activity(activity)
+
+            activity = {'activity': 'sending',
+                        'activity data': (
+                            user_database[7], user_sent_table,
+                            client[1]['activity data'][0], current_date,
+                            client[1]['activity data'][2], client[1]['activity data'][3]),
+                        'main': False}
+            self.write_in_database.add_activity(activity)
+
+
 
         client[2].close()
         self.clients['processing'].remove(client)
-
-
 
 
     # ============ Verifiying_ Clients

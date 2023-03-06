@@ -14,12 +14,12 @@ server_datas = (
 server_table = 'primary_datas'
 
 user_recieved_datas = (
-    'id' , 'nickname' , 'date' , 'message'
+    'id' , 'nickname' , 'date' , 'title' ,'message'
 )
 user_recieved_table = 'recieves'
 
 user_sent_datas = (
-    'id' , 'nickname' , 'date' , 'message'
+    'id' , 'nickname' , 'date' , 'title' , 'message'
 )
 user_sent_table = 'sents'
 
@@ -34,7 +34,7 @@ def createPrimaryDatabase():
 def createUserDatabase( filename : str  , table : str ) :
     conn = sqlite3.connect( os.path.join('users database' , filename) )
     cur = conn.cursor()
-    command = f'CREATE TABLE IF NOT EXISTS {table} ( id INTEGER PRIMARY KEY , nickname TEXT , date TEXT , message TEXT )'
+    command = f'CREATE TABLE IF NOT EXISTS {table} ( id INTEGER PRIMARY KEY , nickname TEXT , date TEXT , title TEXT , message TEXT )'
     cur.execute(command)
     conn.commit()
     conn.close()
@@ -89,6 +89,22 @@ def findLowestRecieved( limit = 10 ) -> list :
     conn.close()
     return result
 
+# =====  Writing In Primary Database
+def addNewUser( server_id : str , user_id : str , username : str , password : str , sent : int , received : int , database : str , activity : int ):
+    conn = sqlite3.connect('primary database.db')
+    cur = conn.cursor()
+    values = ( server_id , user_id , username , password , sent , received , database , activity)
+    cur.execute(f"INSERT INTO {server_table} (server_id , user_id , username , password , sent , received , filename , number_of_activity ) VALUES ( ? , ? , ? , ? , ? , ? , ? , ? )" , values)
+    conn.commit()
+    conn.close()
+
+def increaseTheNumberOfActivity( username : str , password : str ,increase = 1 ):
+    conn = sqlite3.connect('primary database.db' , timeout=10)
+    cur = conn.cursor()
+    cur.execute(f"UPDATE {server_table} SET number_of_activity = number_of_activity + ? WHERE username = ? AND password = ? " , (increase , username , password ))
+    conn.commit()
+    conn.close()
+
 # ======= Reading User Database
 def checkHowManyRowsItContain(filename , table : str) -> int :
     conn = sqlite3.connect(filename)
@@ -120,15 +136,22 @@ def getDataByFind(filename : str , table : str , find : str , excepted_ids : lis
     command = f"SELECT * FROM {table} WHERE "
     for num in excepted_ids :
         command = command + f'id != ? AND '
-    command = command + f'nickname = ? OR date = ? OR message = ? '
+    command = command + f'nickname = ? OR date = ? OR title = ? OR message = ? '
     command = command + f'ORDER BY id DESC LIMIT {limit}'
-    cur.execute(command , ( *excepted_ids , find , find , find ) )
+    cur.execute(command , ( *excepted_ids , find , find , find , find ) )
     result = cur.fetchall()
     conn.close()
     if len(result) > 0 :
         excepted_ids = excepted_ids + [ data[0] for data in result ]
     return ( excepted_ids , result )
 
+# ======= Writing In User Database
+def addNewDataInUserDatabase( filename : str , table : str ,nickname : str , date : str , title : str , message : str ) :
+    filename = os.path.join('users database', filename)
+    conn = sqlite3.connect(filename)
+    cur = conn.cursor()
+    cur.execute(f"INSERT INTO {table} ( nickname , date , title , message ) VALUES ( ? ? ? ? )", (nickname , date , title , message ))
+    conn.commit()
 
 # Database Handler
 class DatabaseWritingHandler :
@@ -181,7 +204,18 @@ class DatabaseWritingHandler :
 
     def do_user_activity(self, activity: dict):
         ''' This is where all activities start '''
-        pass
+        if activity['activity'] == 'recieving': # it means there is a incomimg envelope to a user
+            addNewDataInUserDatabase(
+                activity['activity data'][0] , activity['activity data'][1] ,
+                activity['activity data'][2] , activity['activity data'][3] ,
+                activity['activity data'][4] , activity['activity data'][5]
+            )
+        elif activity['activity'] == 'sending': # it means there is a user who sent a envelope
+            addNewDataInUserDatabase(
+                activity['activity data'][0] , activity['activity data'][1] ,
+                activity['activity data'][2] , activity['activity data'][3] ,
+                activity['activity data'][4] , activity['activity data'][5]
+            )
 
     # ===== Do the Main Activity
     def do_main_activities(self):
@@ -192,7 +226,16 @@ class DatabaseWritingHandler :
                 self.do_user_activity(client)
 
     def do_main_activity(self , activity : dict ):
-        pass
+        ''' This is where all activities start '''
+        if activity['activity'] == 'enter' : # it means that user has transaction with server
+            increaseTheNumberOfActivity( activity['activity data'][0] , activity['activity data'][1] )
+        elif activity['activity'] == 'create account' :
+            addNewUser(
+                activity['activity data'][0] , activity['activity data'][1] ,
+                activity['activity data'][2] , activity['activity data'][3],
+                activity['activity data'][4], activity['activity data'][5],
+                activity['activity data'][6], activity['activity data'][7],
+            )
 
     # ===== Do The Pending Activity
     def do_pending_activities(self):
